@@ -19,7 +19,6 @@ import (
 	"github.com/hashicorp/consul-template/watch"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 )
 
 // Regexp for invalid characters in keys
@@ -539,15 +538,13 @@ func newClientSet(c *Config) (*dep.ClientSet, error) {
 func newWatcher(c *Config, clients *dep.ClientSet, once bool) (*watch.Watcher, error) {
 	log.Printf("[INFO] (runner) creating watcher")
 
-	w, err := watch.NewWatcher(&watch.NewWatcherInput{
+	w := watch.NewWatcher(&watch.NewWatcherInput{
 		Clients:          clients,
 		MaxStale:         config.TimeDurationVal(c.MaxStale),
 		Once:             once,
 		RetryFuncConsul:  watch.RetryFunc(c.Consul.Retry.RetryFunc()),
 		RetryFuncDefault: nil,
 	})
-	if err != nil {
-		return nil, errors.Wrap(err, "runner")
-	}
+
 	return w, nil
 }

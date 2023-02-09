@@ -1,5 +1,11 @@
 ## Consul Replicate CHANGELOG
 
+## v0.5.0 (February 9, 2023)
+
+IMPROVEMENTS:
+
+- Bump libraries, refactor code
+
 ## v0.4.0 (August 10, 2017)
 
 IMPROVEMENTS:
