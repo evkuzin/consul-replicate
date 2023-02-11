@@ -1,7 +1,8 @@
-package main
+package cmd
 
 import (
 	"fmt"
+	config2 "github.com/evgeny/consul-replicate/config"
 	"io/ioutil"
 	"os"
 	"reflect"
@@ -25,7 +26,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 	cases := []struct {
 		name string
 		f    []string
-		e    *Config
+		e    *config2.Config
 		err  bool
 	}{
 		// Deprecations
@@ -33,7 +34,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"auth",
 			[]string{"-auth", "abcd:efgh"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Auth: &config.AuthConfig{
 						Username: config.String("abcd"),
@@ -46,7 +47,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul",
 			[]string{"-consul", "127.0.0.1:8500"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Address: config.String("127.0.0.1:8500"),
 				},
@@ -56,7 +57,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"retry",
 			[]string{"-retry", "10s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Retry: &config.RetryConfig{
 						Backoff:    config.TimeDuration(10 * time.Second),
@@ -69,7 +70,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"ssl",
 			[]string{"-ssl"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Enabled: config.Bool(true),
@@ -81,7 +82,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"ssl_verify",
 			[]string{"-ssl-verify"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Verify: config.Bool(true),
@@ -93,7 +94,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"ssl_ca-cert",
 			[]string{"-ssl-ca-cert", "foo"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						CaCert: config.String("foo"),
@@ -105,7 +106,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"ssl_cert",
 			[]string{"-ssl-cert", "foo"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Cert: config.String("foo"),
@@ -117,7 +118,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"token",
 			[]string{"-token", "abcd1234"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Token: config.String("abcd1234"),
 				},
@@ -130,7 +131,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"config",
 			[]string{"-config", f.Name()},
-			&Config{},
+			&config2.Config{},
 			false,
 		},
 		{
@@ -139,13 +140,13 @@ func TestCLI_ParseFlags(t *testing.T) {
 				"-config", f.Name(),
 				"-config", f.Name(),
 			},
-			&Config{},
+			&config2.Config{},
 			false,
 		},
 		{
 			"consul_addr",
 			[]string{"-consul-addr", "1.2.3.4"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Address: config.String("1.2.3.4"),
 				},
@@ -161,7 +162,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul_auth_username",
 			[]string{"-consul-auth", "username"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Auth: &config.AuthConfig{
 						Username: config.String("username"),
@@ -173,7 +174,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul_auth_username_password",
 			[]string{"-consul-auth", "username:password"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Auth: &config.AuthConfig{
 						Username: config.String("username"),
@@ -186,7 +187,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-retry",
 			[]string{"-consul-retry"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Retry: &config.RetryConfig{
 						Enabled: config.Bool(true),
@@ -198,7 +199,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-retry-attempts",
 			[]string{"-consul-retry-attempts", "20"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Retry: &config.RetryConfig{
 						Attempts: config.Int(20),
@@ -210,7 +211,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-retry-backoff",
 			[]string{"-consul-retry-backoff", "30s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Retry: &config.RetryConfig{
 						Backoff: config.TimeDuration(30 * time.Second),
@@ -222,7 +223,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-retry-max-backoff",
 			[]string{"-consul-retry-max-backoff", "60s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Retry: &config.RetryConfig{
 						MaxBackoff: config.TimeDuration(60 * time.Second),
@@ -234,7 +235,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl",
 			[]string{"-consul-ssl"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Enabled: config.Bool(true),
@@ -246,7 +247,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-ca-cert",
 			[]string{"-consul-ssl-ca-cert", "ca_cert"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						CaCert: config.String("ca_cert"),
@@ -258,7 +259,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-ca-path",
 			[]string{"-consul-ssl-ca-path", "ca_path"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						CaPath: config.String("ca_path"),
@@ -270,7 +271,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-cert",
 			[]string{"-consul-ssl-cert", "cert"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Cert: config.String("cert"),
@@ -282,7 +283,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-key",
 			[]string{"-consul-ssl-key", "key"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Key: config.String("key"),
@@ -294,7 +295,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-server-name",
 			[]string{"-consul-ssl-server-name", "server_name"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						ServerName: config.String("server_name"),
@@ -306,7 +307,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-ssl-verify",
 			[]string{"-consul-ssl-verify"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					SSL: &config.SSLConfig{
 						Verify: config.Bool(true),
@@ -318,7 +319,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-token",
 			[]string{"-consul-token", "token"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Token: config.String("token"),
 				},
@@ -328,7 +329,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-transport-dial-keep-alive",
 			[]string{"-consul-transport-dial-keep-alive", "30s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Transport: &config.TransportConfig{
 						DialKeepAlive: config.TimeDuration(30 * time.Second),
@@ -340,7 +341,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-transport-dial-timeout",
 			[]string{"-consul-transport-dial-timeout", "30s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Transport: &config.TransportConfig{
 						DialTimeout: config.TimeDuration(30 * time.Second),
@@ -352,7 +353,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-transport-disable-keep-alives",
 			[]string{"-consul-transport-disable-keep-alives"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Transport: &config.TransportConfig{
 						DisableKeepAlives: config.Bool(true),
@@ -364,7 +365,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-transport-max-idle-conns-per-host",
 			[]string{"-consul-transport-max-idle-conns-per-host", "100"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Transport: &config.TransportConfig{
 						MaxIdleConnsPerHost: config.Int(100),
@@ -376,7 +377,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"consul-transport-tls-handshake-timeout",
 			[]string{"-consul-transport-tls-handshake-timeout", "30s"},
-			&Config{
+			&config2.Config{
 				Consul: &config.ConsulConfig{
 					Transport: &config.TransportConfig{
 						TLSHandshakeTimeout: config.TimeDuration(30 * time.Second),
@@ -388,9 +389,9 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"exclude",
 			[]string{"-exclude", "foo"},
-			&Config{
-				Excludes: &ExcludeConfigs{
-					&ExcludeConfig{
+			&config2.Config{
+				Excludes: &config2.ExcludeConfigs{
+					&config2.ExcludeConfig{
 						Source: config.String("foo"),
 					},
 				},
@@ -403,12 +404,12 @@ func TestCLI_ParseFlags(t *testing.T) {
 				"-exclude", "foo",
 				"-exclude", "bar",
 			},
-			&Config{
-				Excludes: &ExcludeConfigs{
-					&ExcludeConfig{
+			&config2.Config{
+				Excludes: &config2.ExcludeConfigs{
+					&config2.ExcludeConfig{
 						Source: config.String("foo"),
 					},
-					&ExcludeConfig{
+					&config2.ExcludeConfig{
 						Source: config.String("bar"),
 					},
 				},
@@ -418,7 +419,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"kill-signal",
 			[]string{"-kill-signal", "SIGUSR1"},
-			&Config{
+			&config2.Config{
 				KillSignal: config.Signal(syscall.SIGUSR1),
 			},
 			false,
@@ -426,7 +427,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"log-level",
 			[]string{"-log-level", "DEBUG"},
-			&Config{
+			&config2.Config{
 				LogLevel: config.String("DEBUG"),
 			},
 			false,
@@ -434,7 +435,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"max-stale",
 			[]string{"-max-stale", "10s"},
-			&Config{
+			&config2.Config{
 				MaxStale: config.TimeDuration(10 * time.Second),
 			},
 			false,
@@ -442,7 +443,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"pid-file",
 			[]string{"-pid-file", "/var/pid/file"},
-			&Config{
+			&config2.Config{
 				PidFile: config.String("/var/pid/file"),
 			},
 			false,
@@ -450,9 +451,9 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"prefix",
 			[]string{"-prefix", "foo/bar@dc1"},
-			&Config{
-				Prefixes: &PrefixConfigs{
-					&PrefixConfig{
+			&config2.Config{
+				Prefixes: &config2.PrefixConfigs{
+					&config2.PrefixConfig{
 						Datacenter:  config.String("dc1"),
 						Destination: config.String("foo/bar"),
 						Source:      config.String("foo/bar"),
@@ -464,9 +465,9 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"prefix_destination",
 			[]string{"-prefix", "foo/bar@dc1:destination"},
-			&Config{
-				Prefixes: &PrefixConfigs{
-					&PrefixConfig{
+			&config2.Config{
+				Prefixes: &config2.PrefixConfigs{
+					&config2.PrefixConfig{
 						Datacenter:  config.String("dc1"),
 						Destination: config.String("destination"),
 						Source:      config.String("foo/bar"),
@@ -481,14 +482,14 @@ func TestCLI_ParseFlags(t *testing.T) {
 				"-prefix", "foo/bar@dc",
 				"-prefix", "zip/zap@dc",
 			},
-			&Config{
-				Prefixes: &PrefixConfigs{
-					&PrefixConfig{
+			&config2.Config{
+				Prefixes: &config2.PrefixConfigs{
+					&config2.PrefixConfig{
 						Datacenter:  config.String("dc"),
 						Destination: config.String("foo/bar"),
 						Source:      config.String("foo/bar"),
 					},
-					&PrefixConfig{
+					&config2.PrefixConfig{
 						Datacenter:  config.String("dc"),
 						Destination: config.String("zip/zap"),
 						Source:      config.String("zip/zap"),
@@ -500,7 +501,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"reload-signal",
 			[]string{"-reload-signal", "SIGUSR1"},
-			&Config{
+			&config2.Config{
 				ReloadSignal: config.Signal(syscall.SIGUSR1),
 			},
 			false,
@@ -508,7 +509,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"status-dir",
 			[]string{"-status-dir", "a/b/c"},
-			&Config{
+			&config2.Config{
 				StatusDir: config.String("a/b/c"),
 			},
 			false,
@@ -516,7 +517,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"syslog",
 			[]string{"-syslog"},
-			&Config{
+			&config2.Config{
 				Syslog: &config.SyslogConfig{
 					Enabled: config.Bool(true),
 				},
@@ -526,7 +527,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"syslog-facility",
 			[]string{"-syslog-facility", "LOCAL0"},
-			&Config{
+			&config2.Config{
 				Syslog: &config.SyslogConfig{
 					Facility: config.String("LOCAL0"),
 				},
@@ -536,7 +537,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"wait_min",
 			[]string{"-wait", "10s"},
-			&Config{
+			&config2.Config{
 				Wait: &config.WaitConfig{
 					Min: config.TimeDuration(10 * time.Second),
 					Max: config.TimeDuration(40 * time.Second),
@@ -547,7 +548,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 		{
 			"wait_min_max",
 			[]string{"-wait", "10s:30s"},
-			&Config{
+			&config2.Config{
 				Wait: &config.WaitConfig{
 					Min: config.TimeDuration(10 * time.Second),
 					Max: config.TimeDuration(30 * time.Second),
@@ -560,7 +561,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%d_%s", i, tc.name), func(t *testing.T) {
 			out := gatedio.NewByteBuffer()
-			cli := NewCLI(out, out)
+			cli := NewCLI(nil, out, out)
 
 			a, _, _, _, err := cli.ParseFlags(tc.f)
 			if (err != nil) != tc.err {
@@ -568,7 +569,7 @@ func TestCLI_ParseFlags(t *testing.T) {
 			}
 
 			if tc.e != nil {
-				tc.e = DefaultConfig().Merge(tc.e)
+				tc.e = config2.DefaultConfig().Merge(tc.e)
 			}
 
 			// Nil out dependencies, since they don't compare well

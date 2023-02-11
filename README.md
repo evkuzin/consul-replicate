@@ -16,7 +16,7 @@ failures.
 
 **The documentation in this README corresponds to the master branch of Consul Replicate. It may contain unreleased features or different APIs than the most recently released version.**
 
-**Please see the [Git tag](https://github.com/hashicorp/consul-replicate/releases) that corresponds to your version of Consul Replicate for the proper documentation.**
+**Please see the [Git tag](https://github.com/evgeny/consul-replicate/releases) that corresponds to your version of Consul Replicate for the proper documentation.**
 
 ---
 
@@ -318,7 +318,7 @@ Docker engine:
 Clone the repository:
 
 ```shell
-$ git clone https://github.com/hashicorp/consul-replicate.git
+$ git clone https://github.com/evgeny/consul-replicate.git
 ```
 
 To compile the `consul-replicate` binary for your local machine:

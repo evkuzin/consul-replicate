@@ -7,7 +7,7 @@ LABEL maintainer "Seth Vargo <seth@sethvargo.com> (@sethvargo)"
 ARG LD_FLAGS
 ARG GOTAGS
 
-WORKDIR "/go/src/github.com/hashicorp/consul-replicate"
+WORKDIR "/go/src/github.com/evgeny/consul-replicate"
 
 COPY . .
 

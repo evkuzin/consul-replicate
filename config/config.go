@@ -1,7 +1,8 @@
-package main
+package config
 
 import (
 	"fmt"
+
 	"io/ioutil"
 	"log"
 	"os"
@@ -411,7 +412,7 @@ func Parse(s string) (*Config, error) {
 	return &c, nil
 }
 
-// Must returns a config object that must compile. If there are any errors, this
+// Must return a config object that must compile. If there are any errors, this
 // function will panic. This is most useful in testing or constants.
 func Must(s string) *Config {
 	c, err := Parse(s)
@@ -437,11 +438,11 @@ func FromFile(path string) (*Config, error) {
 		return nil, errors.Wrap(err, "from file: "+path)
 	}
 
-	config, err := Parse(string(c))
+	configParsed, err := Parse(string(c))
 	if err != nil {
 		return nil, errors.Wrap(err, "from file: "+path)
 	}
-	return config, nil
+	return configParsed, nil
 }
 
 // FromPath iterates and merges all configuration files in a given

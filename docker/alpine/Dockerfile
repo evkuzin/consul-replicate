@@ -1,15 +1,16 @@
 #
 # Builder
 #
-FROM golang:1.8 AS builder
-LABEL maintainer "Seth Vargo <seth@sethvargo.com> (@sethvargo)"
+FROM golang:1.20 AS builder
+LABEL maintainer="Evgeny Kuzin <evgeny.kuzin@outlook.com>"
 
 ARG LD_FLAGS
 ARG GOTAGS
 
-WORKDIR "/go/src/github.com/hashicorp/consul-replicate"
+WORKDIR "/src"
 
 COPY . .
+RUN go mod tidy
 
 RUN \
   CGO_ENABLED="0" \
@@ -19,13 +20,13 @@ RUN \
 # Final
 #
 FROM alpine:latest
-LABEL maintainer "Seth Vargo <seth@sethvargo.com> (@sethvargo)"
+LABEL maintainer="Evgeny Kuzin <evgeny.kuzin@outlook.com>"
 
 
 # This is the release of https://github.com/hashicorp/docker-base to pull in
 # order to provide HashiCorp-built versions of basic utilities like dumb-init
 # and gosu.
-ARG DOCKER_BASE_VERSION="0.0.4"
+ARG DOCKER_BASE_VERSION="0.0.5"
 
 # This is the location of the releases.
 ARG HASHICORP_RELEASES="https://releases.hashicorp.com"

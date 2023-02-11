@@ -1,14 +1,14 @@
-package main
+package runner
 
 import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	cfg "github.com/evgeny/consul-replicate/config"
+	"github.com/evgeny/consul-replicate/logger"
 	"io"
-	"log"
 	"os"
-	"regexp"
 	"sync"
 	"time"
 
@@ -19,14 +19,10 @@ import (
 	"github.com/hashicorp/consul-template/watch"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/go-multierror"
-	"github.com/pkg/errors"
 )
 
-// Regexp for invalid characters in keys
-var InvalidRegexp = regexp.MustCompile(`[^a-zA-Z0-9_]`)
-
 // Status is an internal struct that is responsible for marshaling and
-// unmarshaling JSON responses into keys.
+// unmarshalling JSON responses into keys.
 type Status struct {
 	// LastReplicated is the last time the replication occurred.
 	LastReplicated uint64
@@ -47,7 +43,7 @@ type Runner struct {
 
 	// config is the Config that created this Runner. It is used internally to
 	// construct other objects and pass data.
-	config *Config
+	config *cfg.Config
 
 	// client is the consul/api client.
 	clients *dep.ClientSet
@@ -69,15 +65,17 @@ type Runner struct {
 
 	// watcher is the watcher this runner is using.
 	watcher *watch.Watcher
+	logger  logger.Logger
 }
 
 // NewRunner accepts a config, command, and boolean value for once mode.
-func NewRunner(config *Config, once bool) (*Runner, error) {
-	log.Printf("[INFO] (runner) creating new runner (once: %v)", once)
+func NewRunner(logger logger.Logger, config *cfg.Config, once bool) (*Runner, error) {
+	logger.Infof("(runner) creating new runner (once: %b)", once)
 
 	runner := &Runner{
 		config: config,
 		once:   once,
+		logger: logger,
 	}
 
 	if err := runner.init(); err != nil {
@@ -90,7 +88,7 @@ func NewRunner(config *Config, once bool) (*Runner, error) {
 // Start creates a new runner and begins watching dependencies and quiescence
 // timers. This is the main event loop and will block until finished.
 func (r *Runner) Start() {
-	log.Printf("[INFO] (runner) starting")
+	r.logger.Info("(runner) starting")
 
 	// Create the pid before doing anything.
 	if err := r.storePid(); err != nil {
@@ -136,7 +134,7 @@ func (r *Runner) Start() {
 
 			// If we are waiting for quiescence, setup the timers
 			if *r.config.Wait.Min != 0 && *r.config.Wait.Max != 0 {
-				log.Printf("[INFO] (runner) quiescence timers starting")
+				r.logger.Info("(runner) quiescence timers starting")
 				r.minTimer = time.After(*r.config.Wait.Min)
 				if r.maxTimer == nil {
 					r.maxTimer = time.After(*r.config.Wait.Max)
@@ -144,16 +142,16 @@ func (r *Runner) Start() {
 				continue
 			}
 		case <-r.minTimer:
-			log.Printf("[INFO] (runner) quiescence minTimer fired")
+			r.logger.Info("(runner) quiescence minTimer fired")
 			r.minTimer, r.maxTimer = nil, nil
 		case <-r.maxTimer:
-			log.Printf("[INFO] (runner) quiescence maxTimer fired")
+			r.logger.Info("(runner) quiescence maxTimer fired")
 			r.minTimer, r.maxTimer = nil, nil
 		case err := <-r.watcher.ErrCh():
-			log.Printf("[ERR] (runner) watcher reported error: %s", err)
+			r.logger.Errorf("(runner) watcher reported error: %s", err)
 			r.ErrCh <- err
 		case <-r.DoneCh:
-			log.Printf("[INFO] (runner) received finish")
+			r.logger.Info("(runner) received finish")
 			return
 		case <-onceCh:
 		}
@@ -166,7 +164,7 @@ func (r *Runner) Start() {
 		}
 
 		if r.once {
-			log.Printf("[INFO] (runner) run finished and -once is set, exiting")
+			r.logger.Info("(runner) run finished and -once is set, exiting")
 			r.DoneCh <- struct{}{}
 			return
 		}
@@ -175,10 +173,10 @@ func (r *Runner) Start() {
 
 // Stop halts the execution of this runner and its subprocesses.
 func (r *Runner) Stop() {
-	log.Printf("[INFO] (runner) stopping")
+	r.logger.Info("(runner) stopping")
 	r.watcher.Stop()
 	if err := r.deletePid(); err != nil {
-		log.Printf("[WARN] (runner) could not remove pid at %q: %s",
+		r.logger.Warnf("(runner) could not remove pid at %q: %s",
 			*r.config.PidFile, err)
 	}
 	close(r.DoneCh)
@@ -193,7 +191,7 @@ func (r *Runner) Receive(view *watch.View) {
 
 // Run invokes a single pass of the runner.
 func (r *Runner) Run() error {
-	log.Printf("[INFO] (runner) running")
+	r.logger.Info("(runner) running")
 
 	prefixes := *r.config.Prefixes
 	doneCh := make(chan struct{}, len(prefixes))
@@ -221,7 +219,7 @@ func (r *Runner) Run() error {
 // any problems occur.
 func (r *Runner) init() error {
 	// Ensure default configuration values
-	r.config = DefaultConfig().Merge(r.config)
+	r.config = cfg.DefaultConfig().Merge(r.config)
 	r.config.Finalize()
 
 	// Print the final config for debugging
@@ -229,7 +227,7 @@ func (r *Runner) init() error {
 	if err != nil {
 		return err
 	}
-	log.Printf("[DEBUG] (runner) final config (tokens suppressed):\n\n%s\n\n",
+	r.logger.Debugf("[DEBUG] (runner) final config (tokens suppressed):\n\n%s\n\n",
 		result)
 
 	// Create the client
@@ -240,10 +238,7 @@ func (r *Runner) init() error {
 	r.clients = clients
 
 	// Create the watcher
-	watcher, err := newWatcher(r.config, clients, r.once)
-	if err != nil {
-		return fmt.Errorf("runner: %s", err)
-	}
+	watcher := newWatcher(r.logger, r.config, clients, r.once)
 	r.watcher = watcher
 
 	r.data = make(map[string]*watch.View)
@@ -258,7 +253,7 @@ func (r *Runner) init() error {
 }
 
 // get returns the data for a particular view in the watcher.
-func (r *Runner) get(prefix *PrefixConfig) (*watch.View, bool) {
+func (r *Runner) get(prefix *cfg.PrefixConfig) (*watch.View, bool) {
 	r.RLock()
 	defer r.RUnlock()
 	result, ok := r.data[prefix.Dependency.String()]
@@ -268,7 +263,7 @@ func (r *Runner) get(prefix *PrefixConfig) (*watch.View, bool) {
 // replicate performs replication into the current datacenter from the given
 // prefix. This function is designed to be called via a goroutine since it is
 // expensive and needs to be parallelized.
-func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneCh chan struct{}, errCh chan error) {
+func (r *Runner) replicate(prefix *cfg.PrefixConfig, excludes *cfg.ExcludeConfigs, doneCh chan struct{}, errCh chan error) {
 	// Ensure we are not self-replicating
 	info, err := r.clients.Consul().Agent().Self()
 	if err != nil {
@@ -291,7 +286,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 	// Get the prefix data
 	view, ok := r.get(prefix)
 	if !ok {
-		log.Printf("[INFO] (runner) no data for %q", prefix.Dependency)
+		r.logger.Infof("(runner) no data for %q", prefix.Dependency)
 		doneCh <- struct{}{}
 		return
 	}
@@ -319,7 +314,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 			excluded := false
 			for _, exclude := range *excludes {
 				if strings.HasPrefix(pair.Path, config.StringVal(exclude.Source)) {
-					log.Printf("[DEBUG] (runner) key %q has prefix %q, excluding",
+					r.logger.Debugf("(runner) key %q has prefix %q, excluding",
 						pair.Path, config.StringVal(exclude.Source))
 					excluded = true
 				}
@@ -332,26 +327,26 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 
 		// Ignore if the modify index is old
 		if pair.ModifyIndex <= status.LastReplicated {
-			log.Printf("[DEBUG] (runner) skipping because %q is already "+
+			r.logger.Debugf("(runner) skipping because %q is already "+
 				"replicated", key)
 			continue
 		}
 
 		// Check if lock
 		if pair.Flags == api.SemaphoreFlagValue {
-			log.Printf("[WARN] (runner) lock in use at %q, but sessions cannot be "+
+			r.logger.Warnf("(runner) lock in use at %q, but sessions cannot be "+
 				"replicated across datacenters", key)
 		}
 
 		// Check if semaphore
 		if pair.Flags == api.LockFlagValue {
-			log.Printf("[WARN] (runner) semaphore in use at %q, but sessions cannot "+
+			r.logger.Warnf("(runner) semaphore in use at %q, but sessions cannot "+
 				"be replicated across datacenters", key)
 		}
 
 		// Check if session attached
 		if pair.Session != "" {
-			log.Printf("[WARN] (runner) %q has attached session, but sessions "+
+			r.logger.Warnf("(runner) %q has attached session, but sessions "+
 				"cannot be replicated across datacenters", key)
 		}
 
@@ -363,7 +358,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 			errCh <- fmt.Errorf("failed to write %q: %s", key, err)
 			return
 		}
-		log.Printf("[DEBUG] (runner) updated key %q", key)
+		r.logger.Debugf("(runner) updated key %q", key)
 		updates++
 	}
 
@@ -382,7 +377,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 			sourceKey := strings.Replace(key, config.StringVal(prefix.Destination), config.StringVal(prefix.Source), -1)
 			for _, exclude := range *excludes {
 				if strings.HasPrefix(sourceKey, config.StringVal(exclude.Source)) {
-					log.Printf("[DEBUG] (runner) key %q has prefix %q, excluding from deletes",
+					r.logger.Debugf("(runner) key %q has prefix %q, excluding from deletes",
 						sourceKey, *exclude.Source)
 					excluded = true
 				}
@@ -394,7 +389,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 				errCh <- fmt.Errorf("failed to delete %q: %s", key, err)
 				return
 			}
-			log.Printf("[DEBUG] (runner) deleted %q", key)
+			r.logger.Debugf("[DEBUG] (runner) deleted %q", key)
 			deletes++
 		}
 	}
@@ -409,7 +404,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 	}
 
 	if updates > 0 || deletes > 0 {
-		log.Printf("[INFO] (runner) replicated %d updates, %d deletes", updates, deletes)
+		r.logger.Infof("(runner) replicated %d updates, %d deletes", updates, deletes)
 	}
 
 	// We are done!
@@ -417,7 +412,7 @@ func (r *Runner) replicate(prefix *PrefixConfig, excludes *ExcludeConfigs, doneC
 }
 
 // getStatus is used to read the last replication status.
-func (r *Runner) getStatus(prefix *PrefixConfig) (*Status, error) {
+func (r *Runner) getStatus(prefix *cfg.PrefixConfig) (*Status, error) {
 	kv := r.clients.Consul().KV()
 	pair, _, err := kv.Get(r.statusPath(prefix), nil)
 	if err != nil {
@@ -434,7 +429,7 @@ func (r *Runner) getStatus(prefix *PrefixConfig) (*Status, error) {
 }
 
 // setStatus is used to update the last replication status.
-func (r *Runner) setStatus(prefix *PrefixConfig, status *Status) error {
+func (r *Runner) setStatus(prefix *cfg.PrefixConfig, status *Status) error {
 	// Encode the JSON as pretty so operators can easily view it in the Consul UI.
 	enc, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
@@ -450,7 +445,7 @@ func (r *Runner) setStatus(prefix *PrefixConfig, status *Status) error {
 	return err
 }
 
-func (r *Runner) statusPath(prefix *PrefixConfig) string {
+func (r *Runner) statusPath(prefix *cfg.PrefixConfig) string {
 	plain := fmt.Sprintf("%s-%s", config.StringVal(prefix.Source), config.StringVal(prefix.Destination))
 	hash := md5.Sum([]byte(plain))
 	enc := hex.EncodeToString(hash[:])
@@ -464,7 +459,7 @@ func (r *Runner) storePid() error {
 		return nil
 	}
 
-	log.Printf("[INFO] creating pid file at %q", path)
+	r.logger.Infof("creating pid file at %q", path)
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
@@ -487,7 +482,7 @@ func (r *Runner) deletePid() error {
 		return nil
 	}
 
-	log.Printf("[DEBUG] removing pid file at %q", path)
+	r.logger.Debugf("removing pid file at %q", path)
 
 	stat, err := os.Stat(path)
 	if err != nil {
@@ -505,7 +500,7 @@ func (r *Runner) deletePid() error {
 }
 
 // newClientSet creates a new client set from the given config.
-func newClientSet(c *Config) (*dep.ClientSet, error) {
+func newClientSet(c *cfg.Config) (*dep.ClientSet, error) {
 	clients := dep.NewClientSet()
 
 	if err := clients.CreateConsulClient(&dep.CreateConsulClientInput{
@@ -536,18 +531,16 @@ func newClientSet(c *Config) (*dep.ClientSet, error) {
 }
 
 // newWatcher creates a new watcher.
-func newWatcher(c *Config, clients *dep.ClientSet, once bool) (*watch.Watcher, error) {
-	log.Printf("[INFO] (runner) creating watcher")
+func newWatcher(l logger.Logger, c *cfg.Config, clients *dep.ClientSet, once bool) *watch.Watcher {
+	l.Info("(runner) creating watcher")
 
-	w, err := watch.NewWatcher(&watch.NewWatcherInput{
+	w := watch.NewWatcher(&watch.NewWatcherInput{
 		Clients:          clients,
 		MaxStale:         config.TimeDurationVal(c.MaxStale),
 		Once:             once,
 		RetryFuncConsul:  watch.RetryFunc(c.Consul.Retry.RetryFunc()),
 		RetryFuncDefault: nil,
 	})
-	if err != nil {
-		return nil, errors.Wrap(err, "runner")
-	}
-	return w, nil
+
+	return w
 }

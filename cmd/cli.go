@@ -1,8 +1,11 @@
-package main
+package cmd
 
 import (
 	"flag"
 	"fmt"
+	cfg "github.com/evgeny/consul-replicate/config"
+	"github.com/evgeny/consul-replicate/logger"
+	"github.com/evgeny/consul-replicate/runner"
 	"io"
 	"io/ioutil"
 	"log"
@@ -11,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/consul-replicate/version"
+	"github.com/evgeny/consul-replicate/version"
 	"github.com/hashicorp/consul-template/config"
 	"github.com/hashicorp/consul-template/logging"
 	"github.com/hashicorp/consul-template/manager"
@@ -49,14 +52,16 @@ type CLI struct {
 	// stopCh is an internal channel used to trigger a shutdown of the CLI.
 	stopCh  chan struct{}
 	stopped bool
+	logger  logger.Logger
 }
 
-func NewCLI(out, err io.Writer) *CLI {
+func NewCLI(logger logger.Logger, out, err io.Writer) *CLI {
 	return &CLI{
 		outStream: out,
 		errStream: err,
 		signalCh:  make(chan os.Signal, 1),
 		stopCh:    make(chan struct{}),
+		logger:    logger,
 	}
 }
 
@@ -64,96 +69,103 @@ func NewCLI(out, err io.Writer) *CLI {
 // status from the command.
 func (cli *CLI) Run(args []string) int {
 	// Parse the flags and args
-	cfg, paths, once, isVersion, err := cli.ParseFlags(args[1:])
+	conf, paths, once, isVersion, err := cli.ParseFlags(args[1:])
 	if err != nil {
 		if err == flag.ErrHelp {
-			fmt.Fprintf(cli.errStream, usage, version.Name)
+			cli.logger.Errorf(usage, version.Name)
 			return 0
 		}
-		fmt.Fprintln(cli.errStream, err.Error())
+		cli.logger.Errorf(err.Error())
 		return ExitCodeParseFlagsError
 	}
 
 	// Save original config (defaults + parsed flags) for handling reloads
-	cliConfig := cfg.Copy()
+	cliConfig := conf.Copy()
 
-	// Load configuration paths, with CLI taking precendence
-	cfg, err = loadConfigs(paths, cliConfig)
+	// Load configuration paths, with CLI taking precedence
+	conf, err = loadConfigs(paths, cliConfig)
 	if err != nil {
-		return logError(err, ExitCodeConfigError)
+		cli.logger.Error(err.Error())
+		return ExitCodeConfigError
 	}
 
-	cfg.Finalize()
+	conf.Finalize()
 
-	// Setup the config and logging
-	cfg, err = cli.setup(cfg)
+	// Set up the config and logging
+	conf, err = cli.setup(conf)
 	if err != nil {
-		return logError(err, ExitCodeConfigError)
+		cli.logger.Error(err.Error())
+		return ExitCodeConfigError
 	}
 
 	// Print version information for debugging
-	log.Printf("[INFO] %s", version.HumanVersion)
+	cli.logger.Infof("%s", version.HumanVersion)
 
 	// If the version was requested, return an "error" containing the version
 	// information. This might sound weird, but most *nix applications actually
 	// print their version on stderr anyway.
 	if isVersion {
-		log.Printf("[DEBUG] (cli) version flag was given, exiting now")
-		fmt.Fprintf(cli.errStream, "%s\n", version.HumanVersion)
+		cli.logger.Debug("(cli) version flag was given, exiting now")
+		cli.logger.Errorf("%s\n", version.HumanVersion)
 		return ExitCodeOK
 	}
 
-	// Initial runner
-	runner, err := NewRunner(cfg, once)
+	// Initial newRunner
+	newRunner, err := runner.NewRunner(cli.logger, conf, once)
 	if err != nil {
-		return logError(err, ExitCodeRunnerError)
+		cli.logger.Error(err.Error())
+		return ExitCodeRunnerError
 	}
-	go runner.Start()
+	go newRunner.Start()
 
 	// Listen for signals
 	signal.Notify(cli.signalCh)
 
 	for {
 		select {
-		case err := <-runner.ErrCh:
-			// Check if the runner's error returned a specific exit status, and return
+		case err := <-newRunner.ErrCh:
+			// Check if the newRunner's error returned a specific exit status, and return
 			// that value. If no value was given, return a generic exit status.
 			code := ExitCodeRunnerError
 			if typed, ok := err.(manager.ErrExitable); ok {
 				code = typed.ExitStatus()
 			}
-			return logError(err, code)
-		case <-runner.DoneCh:
+			cli.logger.Error(err.Error())
+			return code
+		case <-newRunner.DoneCh:
 			return ExitCodeOK
 		case s := <-cli.signalCh:
-			log.Printf("[DEBUG] (cli) receiving signal %q", s)
+			cli.logger.Debugf("(cli) receiving signal %q", s)
 
 			switch s {
-			case *cfg.ReloadSignal:
-				fmt.Fprintf(cli.errStream, "Reloading configuration...\n")
-				runner.Stop()
+			case *conf.ReloadSignal:
+				cli.logger.Warn("Reloading configuration...\n")
+				newRunner.Stop()
 
-				// Re-parse any configuration files or paths
-				cfg, err = loadConfigs(paths, cliConfig)
+				// Redo parse any configuration files or paths
+				conf, err = loadConfigs(paths, cliConfig)
 				if err != nil {
-					return logError(err, ExitCodeConfigError)
+					cli.logger.Error(err.Error())
+					return ExitCodeConfigError
 				}
-				cfg.Finalize()
+				conf.Finalize()
 
 				// Load the new configuration from disk
-				cfg, err = cli.setup(cfg)
+				conf, err = cli.setup(conf)
 				if err != nil {
-					return logError(err, ExitCodeConfigError)
+					cli.logger.Error(err.Error())
+					return ExitCodeConfigError
 				}
 
-				runner, err = NewRunner(cfg, once)
+				newRunner, err = runner.NewRunner(cli.logger, conf, once)
 				if err != nil {
-					return logError(err, ExitCodeRunnerError)
+					cli.logger.Error(err.Error())
+					return ExitCodeRunnerError
 				}
-				go runner.Start()
-			case *cfg.KillSignal:
-				fmt.Fprintf(cli.errStream, "Cleaning up...\n")
-				runner.Stop()
+				go newRunner.Start()
+			case *conf.KillSignal:
+				cli.logger.Warn("Cleaning up...")
+				newRunner.Stop()
 				return ExitCodeInterrupt
 			case signals.SignalLookup["SIGCHLD"]:
 				// The SIGCHLD signal is sent to the parent of a child process when it
@@ -171,7 +183,7 @@ func (cli *CLI) Run(args []string) int {
 	}
 }
 
-// stop is used internally to shutdown a running CLI
+// stop is used internally to shut down a running CLI
 func (cli *CLI) stop() {
 	cli.Lock()
 	defer cli.Unlock()
@@ -188,9 +200,9 @@ func (cli *CLI) stop() {
 // Flag library. This is extracted into a helper to keep the main function
 // small, but it also makes writing tests for parsing command line arguments
 // much easier and cleaner.
-func (cli *CLI) ParseFlags(args []string) (*Config, []string, bool, bool, error) {
+func (cli *CLI) ParseFlags(args []string) (*cfg.Config, []string, bool, bool, error) {
 	var once, isVersion bool
-	var c = DefaultConfig()
+	var c = cfg.DefaultConfig()
 
 	// configPaths stores the list of configuration paths on disk
 	configPaths := make([]string, 0, 6)
@@ -305,7 +317,7 @@ func (cli *CLI) ParseFlags(args []string) (*Config, []string, bool, bool, error)
 	}), "consul-transport-tls-handshake-timeout", "")
 
 	flags.Var((funcVar)(func(s string) error {
-		e, err := ParseExcludeConfig(s)
+		e, err := cfg.ParseExcludeConfig(s)
 		if err != nil {
 			return err
 		}
@@ -340,7 +352,7 @@ func (cli *CLI) ParseFlags(args []string) (*Config, []string, bool, bool, error)
 	}), "pid-file", "")
 
 	flags.Var((funcVar)(func(s string) error {
-		p, err := ParsePrefixConfig(s)
+		p, err := cfg.ParsePrefixConfig(s)
 		if err != nil {
 			return err
 		}
@@ -462,13 +474,13 @@ func (cli *CLI) ParseFlags(args []string) (*Config, []string, bool, bool, error)
 // handleError outputs the given error's Error() to the errStream and returns
 // loadConfigs loads the configuration from the list of paths. The optional
 // configuration is the list of overrides to apply at the very end, taking
-// precendence over any configurations that were loaded from the paths. If any
+// precedence over any configurations that were loaded from the paths. If any
 // errors occur when reading or parsing those sub-configs, it is returned.
-func loadConfigs(paths []string, o *Config) (*Config, error) {
-	finalC := DefaultConfig()
+func loadConfigs(paths []string, o *cfg.Config) (*cfg.Config, error) {
+	finalC := cfg.DefaultConfig()
 
 	for _, path := range paths {
-		c, err := FromPath(path)
+		c, err := cfg.FromPath(path)
 		if err != nil {
 			return nil, err
 		}
@@ -481,13 +493,7 @@ func loadConfigs(paths []string, o *Config) (*Config, error) {
 	return finalC, nil
 }
 
-// logError logs an error message and then returns the given status.
-func logError(err error, status int) int {
-	log.Printf("[ERR] (cli) %s", err)
-	return status
-}
-
-func (cli *CLI) setup(conf *Config) (*Config, error) {
+func (cli *CLI) setup(conf *cfg.Config) (*cfg.Config, error) {
 	if err := logging.Setup(&logging.Config{
 		SyslogName:     version.Name,
 		Level:          config.StringVal(conf.LogLevel),
